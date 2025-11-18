@@ -6,7 +6,7 @@ import { useUser } from "@clerk/nextjs";
 import { useQuery } from "convex/react";
 
 import { useRouter } from "next/navigation";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { createStripeConnectLoginLink } from "@/app/actions/createStripeConnectLoginLink";
 import { getStripeConnectAccountStatus } from "@/app/actions/getStripeConnectAccountStatus";
 import type { AccountStatus } from "@/app/actions/getStripeConnectAccountStatus";
@@ -16,14 +16,13 @@ import Spinner from "./Spinner";
 
 export default function SellerDashboard() {
   const [accountCreatePending, setAccountCreatePending] = useState(false);
-  const [accountLinkCreatePending, setAccountLinkCreatePending] =
-    useState(false);
+  const [accountLinkCreatePending, setAccountLinkCreatePending] = useState(false);
   const [error, setError] = useState(false);
-  const [accountStatus, setAccountStatus] = useState<AccountStatus | null>(
-    null
-  );
+  const [accountStatus, setAccountStatus] = useState<AccountStatus | null>(null);
+
   const router = useRouter();
   const { user } = useUser();
+
   const stripeConnectId = useQuery(api.users.getUsersStripeConnectId, {
     userId: user?.id || "",
   });
@@ -31,11 +30,27 @@ export default function SellerDashboard() {
   const isReadyToAcceptPayments =
     accountStatus?.isActive && accountStatus?.payoutsEnabled;
 
+  // ---------------------------
+  // FIX: Wrap in useCallback
+  // ---------------------------
+  const fetchAccountStatus = useCallback(async () => {
+    if (!stripeConnectId) return;
+    try {
+      const status = await getStripeConnectAccountStatus(stripeConnectId);
+      setAccountStatus(status);
+    } catch (err) {
+      console.error("Error fetching account status:", err);
+    }
+  }, [stripeConnectId]);
+
+  // ---------------------------
+  // FIX: Add fetchAccountStatus to dependencies
+  // ---------------------------
   useEffect(() => {
     if (stripeConnectId) {
       fetchAccountStatus();
     }
-  }, [stripeConnectId]);
+  }, [stripeConnectId, fetchAccountStatus]);
 
   if (stripeConnectId === undefined) {
     return <Spinner />;
@@ -53,17 +68,6 @@ export default function SellerDashboard() {
     }
   };
 
-  const fetchAccountStatus = async () => {
-    if (stripeConnectId) {
-      try {
-        const status = await getStripeConnectAccountStatus(stripeConnectId);
-        setAccountStatus(status);
-      } catch (error) {
-        console.error("Error fetching account status:", error);
-      }
-    }
-  };
-
   return (
     <div className="max-w-3xl mx-auto p-6">
       <div className="bg-white rounded-lg shadow-lg overflow-hidden">
@@ -75,7 +79,7 @@ export default function SellerDashboard() {
           </p>
         </div>
 
-        {/* Main Content */}
+        {/* MAIN CONTENT */}
         {isReadyToAcceptPayments && (
           <>
             <div className="bg-white p-8 rounded-lg">
@@ -110,7 +114,7 @@ export default function SellerDashboard() {
         )}
 
         <div className="p-6">
-          {/* Account Creation Section */}
+          {/* CREATE ACCOUNT */}
           {!stripeConnectId && !accountCreatePending && (
             <div className="text-center py-8">
               <h3 className="text-xl font-semibold mb-4">
@@ -126,15 +130,11 @@ export default function SellerDashboard() {
                   setError(false);
                   try {
                     await createStripeConnectCustomer();
-                    setAccountCreatePending(false);
-                  } catch (error) {
-                    console.error(
-                      "Error creating Stripe Connect customer:",
-                      error
-                    );
+                  } catch (err) {
+                    console.error("Error:", err);
                     setError(true);
-                    setAccountCreatePending(false);
                   }
+                  setAccountCreatePending(false);
                 }}
                 className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors"
               >
@@ -143,12 +143,12 @@ export default function SellerDashboard() {
             </div>
           )}
 
-          {/* Account Status Section */}
+          {/* ACCOUNT STATUS */}
           {stripeConnectId && accountStatus && (
             <div className="space-y-6">
-              {/* Status Cards */}
+              {/* Account Status Cards */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* Account Status Card */}
+                {/* Status Card */}
                 <div className="bg-gray-50 rounded-lg p-4">
                   <h3 className="text-sm font-medium text-gray-500">
                     Account Status
@@ -167,7 +167,7 @@ export default function SellerDashboard() {
                   </div>
                 </div>
 
-                {/* Payments Status Card */}
+                {/* Payment Capability */}
                 <div className="bg-gray-50 rounded-lg p-4">
                   <h3 className="text-sm font-medium text-gray-500">
                     Payment Capability
@@ -221,12 +221,13 @@ export default function SellerDashboard() {
                 </div>
               </div>
 
-              {/* Requirements Section */}
+              {/* Requirements */}
               {accountStatus.requiresInformation && (
                 <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
                   <h3 className="text-sm font-medium text-yellow-800 mb-3">
                     Required Information
                   </h3>
+
                   {accountStatus.requirements.currently_due.length > 0 && (
                     <div className="mb-3">
                       <p className="text-yellow-800 font-medium mb-2">
@@ -239,21 +240,7 @@ export default function SellerDashboard() {
                       </ul>
                     </div>
                   )}
-                  {accountStatus.requirements.eventually_due.length > 0 && (
-                    <div>
-                      <p className="text-yellow-800 font-medium mb-2">
-                        Eventually Needed:
-                      </p>
-                      <ul className="list-disc pl-5 text-yellow-700 text-sm">
-                        {accountStatus.requirements.eventually_due.map(
-                          (req) => (
-                            <li key={req}>{req.replace(/_/g, " ")}</li>
-                          )
-                        )}
-                      </ul>
-                    </div>
-                  )}
-                  {/* Only show Add Information button if there are requirements */}
+
                   {!accountLinkCreatePending && (
                     <button
                       onClick={async () => {
@@ -261,15 +248,10 @@ export default function SellerDashboard() {
                         setError(false);
                         try {
                           const { url } =
-                            await createStripeConnectAccountLink(
-                              stripeConnectId
-                            );
+                            await createStripeConnectAccountLink(stripeConnectId);
                           router.push(url);
-                        } catch (error) {
-                          console.error(
-                            "Error creating Stripe Connect account link:",
-                            error
-                          );
+                        } catch (err) {
+                          console.error("Error:", err);
                           setError(true);
                         }
                         setAccountLinkCreatePending(false);
@@ -282,7 +264,7 @@ export default function SellerDashboard() {
                 </div>
               )}
 
-              {/* Action Buttons */}
+              {/* Actions */}
               <div className="flex flex-wrap gap-3 mt-6">
                 {accountStatus.isActive && (
                   <button
@@ -293,6 +275,7 @@ export default function SellerDashboard() {
                     Seller Dashboard
                   </button>
                 )}
+
                 <button
                   onClick={fetchAccountStatus}
                   className="bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 transition-colors"
@@ -310,7 +293,6 @@ export default function SellerDashboard() {
             </div>
           )}
 
-          {/* Loading States */}
           {accountCreatePending && (
             <div className="text-center py-4 text-gray-600">
               Creating your seller account...
